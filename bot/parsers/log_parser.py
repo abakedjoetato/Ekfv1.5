@@ -1391,6 +1391,16 @@ class LogParser:
                     logger.info(f"🧊 COLD START completed via IntelligentLogParser: {result.get('events_processed', 0)} events processed")
                     new_events = result.get('events_processed', 0)
                     processed_lines = result.get('lines_analyzed', total_lines)
+                    
+                    # After cold start processing, update file state and ensure connection tracking is current
+                    server_key = self.get_server_status_key(guild_id, server_id)
+                    content_size = len(log_content.encode('utf-8'))
+                    await self._update_file_state(server_key, content_size, total_lines, lines[-1] if lines else "")
+                    
+                    # Ensure voice channels are updated with current player counts from cold start
+                    if hasattr(self.connection_parser, '_update_counts'):
+                        await self.connection_parser._update_counts(server_key)
+                    
                 finally:
                     # Clean up temporary file
                     try:
@@ -1440,6 +1450,11 @@ class LogParser:
                         await asyncio.sleep(0.05)
 
                 logger.info(f"🔥 HOT START completed for server {server_id}: {processed_lines} lines processed, {new_events} events found - All embeds sent")
+                
+                # Update file state after hot start processing
+                server_key = self.get_server_status_key(guild_id, server_id)
+                content_size = len(log_content.encode('utf-8'))
+                await self._update_file_state(server_key, content_size, total_lines, lines[-1] if lines else "")
 
         except Exception as e:
             logger.error(f"Failed to parse logs for server {server_config}: {e}")
@@ -1541,24 +1556,33 @@ class LogParser:
     async def _save_persistent_state(self):
         """Save persistent file state to database"""
         try:
-            for server_key, state_data in self.file_states.items():
-                if '_' in server_key:
-                    guild_id_str, server_id = server_key.split('_', 1)
-                    guild_id = int(guild_id_str)
+            # Get all guilds to map server keys properly
+            guilds_cursor = self.bot.db_manager.guilds.find({})
+            
+            async for guild in guilds_cursor:
+                guild_id = guild.get('guild_id')
+                servers = guild.get('servers', [])
+                
+                for server in servers:
+                    server_id = str(server.get('server_id', ''))
+                    server_key = self.get_server_status_key(guild_id, server_id)
                     
-                    # Save state to database
-                    await self.bot.db_manager.save_parser_state(
-                        guild_id=guild_id,
-                        server_id=server_id,
-                        state_data={
-                            'file_size': state_data.get('file_size', 0),
-                            'last_position': state_data.get('last_position', 0),
-                            'last_line': state_data.get('last_line', ''),
-                            'file_hash': state_data.get('file_hash', ''),
-                            'last_processed': state_data.get('last_processed')
-                        },
-                        parser_type="log_parser"
-                    )
+                    if server_key in self.file_states:
+                        state_data = self.file_states[server_key]
+                        
+                        # Save state to database
+                        await self.bot.db_manager.save_parser_state(
+                            guild_id=guild_id,
+                            server_id=server_id,
+                            state_data={
+                                'file_size': state_data.get('file_size', 0),
+                                'last_position': state_data.get('last_position', 0),
+                                'last_line': state_data.get('last_line', ''),
+                                'file_hash': state_data.get('file_hash', ''),
+                                'last_processed': state_data.get('last_processed')
+                            },
+                            parser_type="log_parser"
+                        )
             
             logger.debug("Saved persistent state to database")
         except Exception as e:
