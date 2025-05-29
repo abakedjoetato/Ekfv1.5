@@ -1604,6 +1604,7 @@ class LogParser:
     def _detect_file_reset(self, server_key: str, current_size: int, current_lines: List[str]) -> bool:
         """Detect if file has been reset/rotated based on size and content"""
         if server_key not in self.file_states:
+            logger.info(f"No previous state for {server_key}, treating as first run")
             return False
 
         stored_state = self.file_states[server_key]
@@ -1611,23 +1612,27 @@ class LogParser:
         stored_line_count = stored_state.get('line_count', 0)
         stored_last_line = stored_state.get('last_line', '')
 
-        # If file is significantly smaller, it's likely been reset
-        if current_size < stored_size * 0.5:  # 50% smaller indicates rotation
-            logger.info(f"File reset detected for {server_key}: size {stored_size} -> {current_size}")
-            return True
-
-        # If we have fewer lines than expected, it's been reset
         current_line_count = len(current_lines)
-        if current_line_count < stored_line_count * 0.5:  # 50% fewer lines
-            logger.info(f"File reset detected for {server_key}: lines {stored_line_count} -> {current_line_count}")
+        
+        # Only consider it a reset if file is dramatically smaller (90% reduction)
+        if stored_size > 0 and current_size < stored_size * 0.1:
+            logger.info(f"File reset detected for {server_key}: size {stored_size} -> {current_size} (90% reduction)")
             return True
 
-        # If the last line we remember isn't in the current file, it's been reset
-        if stored_last_line and current_lines:
-            if stored_last_line not in current_lines[-min(10, len(current_lines)):]:  # Check last 10 lines
-                logger.info(f"File reset detected for {server_key}: last line not found")
-                return True
+        # Only consider it a reset if we have 90% fewer lines
+        if stored_line_count > 0 and current_line_count < stored_line_count * 0.1:
+            logger.info(f"File reset detected for {server_key}: lines {stored_line_count} -> {current_line_count} (90% reduction)")
+            return True
 
+        # More lenient last line check - only reset if file is much smaller AND last line missing
+        if (stored_last_line and current_lines and 
+            current_size < stored_size * 0.8 and  # File is 20% smaller
+            stored_last_line not in current_lines[-min(50, len(current_lines))]):  # Check last 50 lines
+            logger.info(f"File reset detected for {server_key}: file smaller and last line not found")
+            return True
+
+        # If we get here, it's likely just new content appended
+        logger.debug(f"No reset detected for {server_key}: size {stored_size} -> {current_size}, lines {stored_line_count} -> {current_line_count}")
         return False
 
     def reset_log_positions(self, guild_id: int = None, server_id: str = None):

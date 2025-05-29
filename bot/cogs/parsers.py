@@ -11,6 +11,7 @@ import discord
 from discord.ext import commands
 from bot.cogs.autocomplete import ServerAutocomplete
 from discord import Option
+from discord import app_commands
 
 logger = logging.getLogger(__name__)
 
@@ -336,6 +337,76 @@ class Parsers(commands.Cog):
         except Exception as e:
             await ctx.followup.send(f"❌ Failed to reset log positions: {str(e)}")
             logger.error(f"Reset log positions failed: {e}")
+
+    @app_commands.command(name="debug_playercount", description="Debug player count tracking - comprehensive investigation")
+    @app_commands.describe(server_id="Optional specific server ID to debug")
+    async def debug_playercount(self, ctx: discord.Interaction, server_id: str = None):
+        """Debug player count tracking for investigation"""
+        await ctx.response.defer(ephemeral=True)
+
+        guild_id = ctx.guild.id
+
+        # Check if log parser is available
+        if not hasattr(self.bot, 'log_parser') or not self.bot.log_parser:
+            await ctx.followup.send("❌ Log parser not initialized")
+            return
+
+        # Get guild config to find servers
+        guild_config = await self.bot.db_manager.get_guild(guild_id)
+        if not guild_config or not guild_config.get('servers'):
+            await ctx.followup.send("❌ No servers configured for this guild")
+            return
+
+        servers = guild_config.get('servers', [])
+        if not servers:
+            await ctx.followup.send("❌ No servers found")
+            return
+
+        embed = discord.Embed(
+            title="🐛 Player Count Debug Information",
+            color=0xff9900,
+            timestamp=discord.utils.utcnow()
+        )
+
+        # Check intelligent connection parser
+        if hasattr(self.bot, 'log_parser') and hasattr(self.bot.log_parser, 'connection_parser'):
+            connection_parser = self.bot.log_parser.connection_parser
+
+            for server_config in servers:
+                server_name = server_config.get('name', 'Unknown')
+                current_server_id = str(server_config.get('_id', 'unknown'))
+
+                # Skip if specific server requested and this isn't it
+                if server_id and current_server_id != server_id:
+                    continue
+
+                server_key = f"{guild_id}_{current_server_id}"
+
+                # Get current stats
+                stats = connection_parser.get_server_stats(server_key)
+
+                # Debug the state
+                connection_parser.debug_server_state(server_key)
+
+                # Get file state info
+                file_state = self.bot.log_parser.file_states.get(server_key, {})
+
+                # Count player states
+                player_states = connection_parser.player_states.get(server_key, {})
+                state_counts = {}
+                for player_id, player_state in player_states.items():
+                    state = player_state.current_state
+                    state_counts[state] = state_counts.get(state, 0) + 1
+
+                embed.add_field(
+                    name=f"📊 {server_name} (ID: {current_server_id})",
+                    value=f"**Live Counts:**\nQueue: {stats.get('queue_count', 0)}\nPlayers: {stats.get('player_count', 0)}\n"
+                          f"**File State:**\nSize: {file_state.get('file_size', 0)}\nLines: {file_state.get('line_count', 0)}\n"
+                          f"**Player States:** {len(player_states)} total\n{', '.join([f'{k}: {v}' for k, v in state_counts.items()]) if state_counts else 'None'}",
+                    inline=True
+                )
+
+        await ctx.followup.send(embed=embed)
 
 def setup(bot):
     bot.add_cog(Parsers(bot))

@@ -92,7 +92,7 @@ class IntelligentConnectionParser:
         # Player name cache per server
         self.player_names: Dict[str, Dict[str, str]] = {}
         
-        # Regex patterns for connection events
+        # Regex patterns for connection events - improved to catch more variations
         self.patterns = {
             'queue_join': re.compile(
                 r'LogNet: Join request: /Game/Maps/world_\d+/World_\d+\?.*\?Name=([^&\s]+).*(?:platformid=PS5:(\w+)|eosid=\|(\w+))', 
@@ -104,6 +104,19 @@ class IntelligentConnectionParser:
             ),
             'disconnect': re.compile(
                 r'UChannel::Close: Sending CloseBunch.*UniqueId: (?:EOS:|PS5:)\|?(\w+)', 
+                re.IGNORECASE
+            ),
+            # Additional patterns to catch more connection events
+            'queue_join_alt': re.compile(
+                r'LogNet: Join request:.*Name=([^&\s]+).*(?:platformid=(?:PS5|XSX|PC):(\w+)|eosid=\|(\w+))', 
+                re.IGNORECASE
+            ),
+            'player_connected': re.compile(
+                r'LogOnline:.*Player.*(\w{32}).*connected', 
+                re.IGNORECASE
+            ),
+            'disconnect_alt': re.compile(
+                r'UChannel::Close.*UniqueId:.*(\w{32})', 
                 re.IGNORECASE
             )
         }
@@ -135,10 +148,16 @@ class IntelligentConnectionParser:
         """Parse a log line for connection events with intelligent duplicate prevention"""
         self.initialize_server_tracking(server_key)
         
-        # Check for queue join
-        if match := self.patterns['queue_join'].search(line):
-            player_name = match.group(1)
-            player_id = match.group(2) or match.group(3)
+        # Debug: Check each pattern individually and log what we're trying to match
+        line_lower = line.lower()
+        
+        # Check for queue join (try both patterns)
+        queue_match = self.patterns['queue_join'].search(line) or self.patterns['queue_join_alt'].search(line)
+        if queue_match:
+            player_name = queue_match.group(1)
+            player_id = queue_match.group(2) or queue_match.group(3)
+            
+            logger.debug(f"🔍 Queue join pattern matched: name={player_name}, id={player_id}")
             
             if player_id:
                 player_state = self.get_or_create_player_state(server_key, player_id, player_name)
@@ -147,9 +166,11 @@ class IntelligentConnectionParser:
                     await self._update_counts(server_key)
                     logger.info(f"🟡 Queue Join: {player_name} ({player_id}) - Queue: {self.server_counts[server_key]['queue_count']}, Players: {self.server_counts[server_key]['player_count']}")
                     
-        # Check for player joined
-        elif match := self.patterns['player_joined'].search(line):
+        # Check for player joined (try both patterns)
+        elif (match := self.patterns['player_joined'].search(line)) or (match := self.patterns['player_connected'].search(line)):
             player_id = match.group(1)
+            
+            logger.debug(f"🔍 Player joined pattern matched: id={player_id}")
             
             # Find existing player state (they should have queued first)
             if player_id in self.player_states[server_key]:
@@ -171,9 +192,11 @@ class IntelligentConnectionParser:
                     logger.info(f"🟢 Direct Join (missed queue): {player_id} - Queue: {self.server_counts[server_key]['queue_count']}, Players: {self.server_counts[server_key]['player_count']}")
                     await self._queue_join_embed(player_state, server_key, guild_id)
                     
-        # Check for disconnect
-        elif match := self.patterns['disconnect'].search(line):
+        # Check for disconnect (try both patterns)
+        elif (match := self.patterns['disconnect'].search(line)) or (match := self.patterns['disconnect_alt'].search(line)):
             player_id = match.group(1)
+            
+            logger.debug(f"🔍 Disconnect pattern matched: id={player_id}")
             
             if player_id in self.player_states[server_key]:
                 player_state = self.player_states[server_key][player_id]
@@ -196,6 +219,10 @@ class IntelligentConnectionParser:
                 player_state = self.get_or_create_player_state(server_key, player_id)
                 # Don't create embed for unknown disconnects, just log
                 logger.debug(f"🟠 Unknown Player Disconnect: {player_id}")
+        else:
+            # Debug: Log lines that contain player-related keywords but don't match patterns
+            if any(keyword in line_lower for keyword in ['player', 'join', 'request', 'registered', 'uniqueid', 'uchannel', 'close']):
+                logger.debug(f"🔍 Player-related line not matched: {line[:100]}...")
         
         return None
 
