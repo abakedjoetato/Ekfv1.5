@@ -344,9 +344,13 @@ class Parsers(commands.Cog):
         await ctx.defer(ephemeral=True)
 
         try:
-            # Sample lines from the actual log file
+            # Sample lines from the actual log file from attached_assets/Deadside.log
             test_lines = [
-                # Mission events
+                # Basic log start
+                "Log file open, 05/17/25 02:01:30",
+                # Server configuration that might contain player limits
+                "LogSFPS: playersmaxcount=50",
+                # Mission events - these should now match
                 "LogSFPS: Mission GA_Settle_05_ChernyLog_mis1 will respawn in 221",
                 "LogSFPS: Mission GA_Settle_05_ChernyLog_mis1 switched to INITIAL",
                 "LogSFPS: Mission GA_Military_02_mis1 will respawn in 1303",
@@ -358,18 +362,38 @@ class Parsers(commands.Cog):
                 "LogNet: UChannel::Close: Sending CloseBunch. ChIndex == 0. UniqueId: EOS:|0002e69a65204b669c20238266782d7b"
             ]
 
-            # Test the intelligent parser patterns
-            parser = self.bot.log_parser.connection_parser
+            # Test both intelligent parser and log parser patterns
             results = []
             
-            for line in test_lines:
-                for pattern_name, pattern in parser.patterns.items():
-                    match = pattern.search(line)
-                    if match:
-                        results.append(f"✅ **{pattern_name}**: {match.groups()}")
-                        break
-                else:
-                    results.append(f"❌ No match: `{line[:50]}...`")
+            # Test intelligent connection parser patterns
+            if hasattr(self.bot, 'log_parser') and hasattr(self.bot.log_parser, 'connection_parser'):
+                connection_parser = self.bot.log_parser.connection_parser
+                results.append("**🔍 Testing Intelligent Connection Parser:**")
+                for line in test_lines:
+                    matched = False
+                    for pattern_name, pattern in connection_parser.patterns.items():
+                        match = pattern.search(line)
+                        if match:
+                            results.append(f"✅ **{pattern_name}**: {match.groups()}")
+                            matched = True
+                            break
+                    if not matched:
+                        results.append(f"❌ No match: `{line[:50]}...`")
+                
+                results.append("\n**🔍 Testing Log Parser Patterns:**")
+                # Test main log parser patterns  
+                for line in test_lines:
+                    matched = False
+                    for pattern_name, pattern in self.bot.log_parser.log_patterns.items():
+                        match = pattern.search(line)
+                        if match:
+                            results.append(f"✅ **{pattern_name}**: {match.groups()}")
+                            matched = True
+                            break
+                    if not matched:
+                        results.append(f"❌ No match: `{line[:50]}...`")
+            else:
+                results.append("❌ Parsers not available")
 
             response = "**Regex Pattern Test Results:**\n\n" + "\n".join(results)
             

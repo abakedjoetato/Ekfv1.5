@@ -93,43 +93,33 @@ class IntelligentConnectionParser:
         # Player name cache per server
         self.player_names: Dict[str, Dict[str, str]] = {}
 
-        # Regex patterns for connection events - updated to match actual Deadside log format
         self.patterns = {
-            # Queue join - matches the actual "Join request" format with Name parameter
-            'queue_join': re.compile(
-                r'LogNet: Join request: /Game/Maps/world_\d+/World_\d+\?.*Name=([^&\?]+).*eosid=\|([a-f0-9]+)', 
-                re.IGNORECASE
-            ),
-            
-            # Beacon connection established (first step in connection process)
-            'beacon_join': re.compile(
-                r'LogBeacon: Beacon Join SFPSOnlineBeaconClient EOS:\|([a-f0-9]+)',
-                re.IGNORECASE
-            ),
-            
-            # Player successfully registered (actual join completion)
-            'player_joined': re.compile(
-                r'LogOnline: Warning: Player \|([a-f0-9]+) successfully registered!', 
-                re.IGNORECASE
-            ),
-            
-            # Disconnect via UChannel close with UniqueId
-            'disconnect': re.compile(
-                r'UChannel::Close: Sending CloseBunch.*UniqueId: EOS:\|([a-f0-9]+)', 
-                re.IGNORECASE
-            ),
-            
-            # Alternative disconnect via UNetConnection close
-            'disconnect_alt': re.compile(
-                r'UNetConnection::Close:.*UniqueId: EOS:\|([a-f0-9]+)', 
-                re.IGNORECASE
-            ),
-            
-            # Beacon disconnection
-            'beacon_disconnect': re.compile(
-                r'LogSFPS:.*NotifyClientDisconnected.*Client name: SFPSOnlineBeaconClient_',
-                re.IGNORECASE
-            )
+            # Updated patterns based on actual log format from attached_assets/Deadside.log
+
+            # 1. Queue Join - Player enters queue (actual format)
+            'queue_join': re.compile(r'LogNet: Join request: /Game/Maps/world_\d+/World_\d+\?.*Name=([^&\?]+).*eosid=\|([a-f0-9]+)', re.IGNORECASE),
+
+            # 2. Player Successfully Registered 
+            'player_joined': re.compile(r'LogOnline: Warning: Player \|([a-f0-9]+) successfully registered!', re.IGNORECASE),
+
+            # 3. Disconnect (covers both pre and post join)
+            'disconnect': re.compile(r'UChannel::Close: Sending CloseBunch.*UniqueId: (?:EOS:|PS5:)\|?([a-f0-9]+)', re.IGNORECASE),
+
+            # 4. Mission events - Updated to match actual log format (no timestamp brackets)
+            'mission_respawn': re.compile(r'LogSFPS: Mission (GA_[A-Za-z0-9_]*_[Mm]is[_0-9]*) will respawn in (\d+)', re.IGNORECASE),
+            'mission_initial': re.compile(r'LogSFPS: Mission (GA_[A-Za-z0-9_]*_[Mm]is[_0-9]*) switched to INITIAL', re.IGNORECASE),
+            'mission_ready': re.compile(r'LogSFPS: Mission (GA_[A-Za-z0-9_]*_[Mm]is[_0-9]*) switched to READY', re.IGNORECASE),
+
+            # 5. Vehicle events - Updated to match actual log format
+            'vehicle_spawn': re.compile(r'LogSFPS: \[ASFPSGameMode::NewVehicle_Add\] Add vehicle (BP_SFPSVehicle_[A-Za-z0-9_]+) Total (\d+)', re.IGNORECASE),
+            'vehicle_delete': re.compile(r'LogSFPS: \[ASFPSGameMode::NewVehicle_Del\] Del vehicle (BP_SFPSVehicle_[A-Za-z0-9_]+) Total (\d+)', re.IGNORECASE),
+
+            # Alternate patterns for broader coverage
+            'queue_join_alt': re.compile(r'LogNet: Join request:.*Name=([^&\s]+).*(?:platformid=(?:PS5|XSX|PC):(\w+)|eosid=\|(\w+))', re.IGNORECASE),
+
+            # Additional connection events
+            'player_connected': re.compile(r'LogOnline:.*Player.*(\w{32}).*connected', re.IGNORECASE),
+            'disconnect_alt': re.compile(r'UChannel::Close.*UniqueId:.*(\w{32})', re.IGNORECASE)
         }
 
     def initialize_server_tracking(self, server_key: str):
@@ -181,7 +171,7 @@ class IntelligentConnectionParser:
         elif (match := self.patterns['beacon_join'].search(line)):
             player_id = match.group(1)
             logger.debug(f"🔍 Beacon join pattern matched: id={player_id}")
-            
+
             # Update existing player state if found
             if player_id in self.player_states[server_key]:
                 player_state = self.player_states[server_key][player_id]
@@ -240,7 +230,7 @@ class IntelligentConnectionParser:
                 player_state = self.get_or_create_player_state(server_key, player_id)
                 # Don't create embed for unknown disconnects, just log
                 logger.debug(f"🟠 Unknown Player Disconnect: {player_id}")
-                
+
         # Check for beacon disconnect
         elif self.patterns['beacon_disconnect'].search(line):
             logger.debug(f"🔍 Beacon disconnect detected")

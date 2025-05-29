@@ -52,32 +52,38 @@ class IntelligentLogParser:
     def _compile_comprehensive_patterns(self) -> Dict[str, re.Pattern]:
         """Compile all log patterns from exhaustive Deadside.log analysis"""
         return {
-            # PLAYER LIFECYCLE - 200% ACCURATE
+            # PLAYER LIFECYCLE - Updated to match actual log format
             'log_rotation': re.compile(r'^Log file open, (\d{2}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})'),
             'server_startup': re.compile(r'LogWorld: Bringing World.*up for play.*at (\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2})'),
             'world_loaded': re.compile(r'LogLoad: Took .* seconds to LoadMap.*World_0'),
-            'server_max_players': re.compile(r'playersmaxcount=(\d+)'),
+            'server_max_players': re.compile(r'LogSFPS:.*playersmaxcount=(\d+)', re.IGNORECASE),
             
-            # Player connection sequence - EXACT patterns from log analysis
-            'player_queue_join': re.compile(r'NotifyAcceptingConnection.*Server SFPSOnlineBeaconHost.*accept'),
+            # Player connection sequence - Updated patterns from actual log
+            'player_queue_join': re.compile(r'LogNet: Join request: /Game/Maps/world_\d+/World_\d+\?.*Name=([^&\?]+).*eosid=\|([a-f0-9]+)', re.IGNORECASE),
+            'player_beacon_join': re.compile(r'LogBeacon: Beacon Join SFPSOnlineBeaconClient EOS:\|([a-f0-9]+)', re.IGNORECASE),
             'player_queue_accepted': re.compile(r'NotifyAcceptingConnection accepted from: ([\d\.]+):(\d+)'),
             'player_beacon_connected': re.compile(r'NotifyAcceptedConnection.*SFPSOnlineBeaconHost.*RemoteAddr: ([\d\.]+):(\d+).*UniqueId: ([A-Z]+:\|\w+)'),
-            'player_queue_disconnect': re.compile(r'UChannel::CleanUp.*RemoteAddr: ([\d\.]+):(\d+).*UniqueId: ([A-Z]+:\|\w+)'),
+            'player_queue_disconnect': re.compile(r'UChannel::Close: Sending CloseBunch.*UniqueId: EOS:\|([a-f0-9]+)', re.IGNORECASE),
             'player_world_connect': re.compile(r'NotifyAcceptedConnection.*Name: World_\d+.*RemoteAddr: ([\d\.]+):(\d+)'),
             
-            # MISSION EVENTS - Exact patterns
-            'mission_respawn': re.compile(r'Mission (GA_[A-Za-z0-9_]+) will respawn in (\d+)'),
-            'mission_state_change': re.compile(r'Mission (GA_[A-Za-z0-9_]+) switched to ([A-Z_]+)'),
-            'mission_ready': re.compile(r'Mission (GA_[A-Za-z0-9_]+) switched to READY'),
-            'mission_in_progress': re.compile(r'Mission (GA_[A-Za-z0-9_]+) switched to IN_PROGRESS'),
-            'mission_completed': re.compile(r'Mission (GA_[A-Za-z0-9_]+) switched to COMPLETED'),
+            # MISSION EVENTS - Updated to match actual log format (LogSFPS prefix, no timestamps)
+            'mission_respawn': re.compile(r'LogSFPS: Mission (GA_[A-Za-z0-9_]*_[Mm]is[_0-9]*) will respawn in (\d+)', re.IGNORECASE),
+            'mission_state_change': re.compile(r'LogSFPS: Mission (GA_[A-Za-z0-9_]*_[Mm]is[_0-9]*) switched to ([A-Z_]+)', re.IGNORECASE),
+            'mission_ready': re.compile(r'LogSFPS: Mission (GA_[A-Za-z0-9_]*_[Mm]is[_0-9]*) switched to READY', re.IGNORECASE),
+            'mission_initial': re.compile(r'LogSFPS: Mission (GA_[A-Za-z0-9_]*_[Mm]is[_0-9]*) switched to INITIAL', re.IGNORECASE),
+            'mission_in_progress': re.compile(r'LogSFPS: Mission (GA_[A-Za-z0-9_]*_[Mm]is[_0-9]*) switched to IN_PROGRESS', re.IGNORECASE),
+            'mission_completed': re.compile(r'LogSFPS: Mission (GA_[A-Za-z0-9_]*_[Mm]is[_0-9]*) switched to COMPLETED', re.IGNORECASE),
             
-            # GAME EVENTS - To be detected from further log analysis
+            # VEHICLE EVENTS - Updated to match actual log format
+            'vehicle_spawn': re.compile(r'LogSFPS: \[ASFPSGameMode::NewVehicle_Add\] Add vehicle (BP_SFPSVehicle_[A-Za-z0-9_]+) Total (\d+)', re.IGNORECASE),
+            'vehicle_delete': re.compile(r'LogSFPS: \[ASFPSGameMode::NewVehicle_Del\] Del vehicle (BP_SFPSVehicle_[A-Za-z0-9_]+) Total (\d+)', re.IGNORECASE),
+            
+            # GAME EVENTS - Placeholder patterns (need actual log examples)
             'airdrop_event': re.compile(r'Event_AirDrop.*spawned.*location.*X=([\d\.-]+).*Y=([\d\.-]+)'),
             'helicrash_event': re.compile(r'Helicrash.*spawned.*location.*X=([\d\.-]+).*Y=([\d\.-]+)'),
             'trader_spawn': re.compile(r'Trader.*spawned.*location.*X=([\d\.-]+).*Y=([\d\.-]+)'),
             
-            # Timestamp extraction
+            # Timestamp extraction - Updated for lines without brackets
             'timestamp': re.compile(r'\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\]')
         }
 
