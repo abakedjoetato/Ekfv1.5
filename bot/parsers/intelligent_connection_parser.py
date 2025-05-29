@@ -129,7 +129,10 @@ class IntelligentConnectionParser:
 
             # 9. Additional connection events for better coverage
             'player_connected': re.compile(r'LogOnline:.*Player.*(\w{32}).*connected', re.IGNORECASE),
-            'network_close': re.compile(r'UChannel::Close.*UniqueId:.*(\w{32})', re.IGNORECASE)
+            'network_close': re.compile(r'UChannel::Close.*UniqueId:.*(\w{32})', re.IGNORECASE),
+            
+            # 10. Server configuration patterns
+            'server_max_players': re.compile(r'LogSFPS:.*playersmaxcount=(\d+)', re.IGNORECASE)
         }
 
     def initialize_server_tracking(self, server_key: str):
@@ -261,6 +264,12 @@ class IntelligentConnectionParser:
                         await self._queue_leave_embed(player_state, server_key, guild_id)
                     else:
                         logger.info(f"🟠 Beacon Disconnect (from queue/connecting): {player_state.player_name or player_id}")
+
+        # Check for server max players configuration
+        elif (match := self.patterns['server_max_players'].search(line)):
+            max_players = int(match.group(1))
+            logger.info(f"🎯 Server max players detected: {max_players}")
+            await self._update_server_max_players(server_key, max_players)
         else:
             # Debug: Log lines that contain player-related keywords but don't match patterns
             if any(keyword in line_lower for keyword in ['player', 'join', 'request', 'registered', 'uniqueid', 'uchannel', 'close']):
@@ -321,8 +330,8 @@ class IntelligentConnectionParser:
                     server_name = server_config.get('name', server_name)
                     break
 
-            # Format channel name
-            max_players = 50
+            # Format channel name - use stored max players or default
+            max_players = self.server_counts[server_key].get('max_players', 50)
             if queue_count > 0:
                 new_name = f"📈 {server_name}: {player_count}/{max_players} ({queue_count} in queue)"
             else:
@@ -485,6 +494,24 @@ class IntelligentConnectionParser:
 
         logger.info(f"Pattern verification results: {json.dumps({k: v['match_count'] for k, v in results.items()}, indent=2)}")
         return results
+
+    async def _update_server_max_players(self, server_key: str, max_players: int):
+        """Update server max players and refresh voice channel"""
+        # Ensure server is initialized
+        self.initialize_server_tracking(server_key)
+        
+        # Store max players in server counts
+        if 'max_players' not in self.server_counts[server_key]:
+            self.server_counts[server_key]['max_players'] = max_players
+        else:
+            self.server_counts[server_key]['max_players'] = max_players
+        
+        logger.info(f"🎯 Updated max players for {server_key}: {max_players}")
+        
+        # Update voice channel with new max player count
+        player_count = self.server_counts[server_key]['player_count']
+        queue_count = self.server_counts[server_key]['queue_count']
+        await self._update_voice_channels(server_key, player_count, queue_count)
 
     def test_counting_logic(self, server_key: str) -> dict:
         """Test the mathematical soundness of counting logic"""

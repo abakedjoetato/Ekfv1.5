@@ -207,6 +207,14 @@ class IntelligentLogParser:
         # Check for max players configuration
         elif match := self.patterns['server_max_players'].search(line):
             max_players = int(match.group(1))
+            events.append({
+                'type': 'server_max_players',
+                'timestamp': timestamp,
+                'data': {
+                    'max_players': max_players,
+                    'message': f'Server max players set to {max_players}'
+                }
+            })
             await self._update_server_max_players(guild_id, server_id, max_players)
         
         # PLAYER LIFECYCLE TRACKING
