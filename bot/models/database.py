@@ -35,6 +35,7 @@ class DatabaseManager:
         self.factions = self.db.factions
         self.kill_events = self.db.kill_events
         self.premium = self.db.premium_servers
+        self.parser_states = self.db.parser_states
 
     async def initialize_indexes(self):
         """Create database indexes for optimal performance"""
@@ -79,6 +80,10 @@ class DatabaseManager:
             await self.kill_events.create_index([("timestamp", -1)])
             await self.kill_events.create_index([("killer", 1)])
             await self.kill_events.create_index([("victim", 1)])
+
+            # Parser states collection indexes
+            await self.parser_states.create_index([("guild_id", 1), ("server_id", 1)], unique=True)
+            await self.parser_states.create_index([("parser_type", 1)])
 
             logger.info("Database indexes created successfully")
 
@@ -757,3 +762,58 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Failed to get current online count: {e}")
             return 0
+
+    # PARSER STATE MANAGEMENT
+    async def get_parser_state(self, guild_id: int, server_id: str, parser_type: str = "log_parser") -> Dict[str, Any]:
+        """Get parser state for a specific server"""
+        try:
+            state = await self.parser_states.find_one({
+                "guild_id": guild_id,
+                "server_id": server_id,
+                "parser_type": parser_type
+            })
+            return state if state else {}
+        except Exception as e:
+            logger.error(f"Failed to get parser state: {e}")
+            return {}
+
+    async def save_parser_state(self, guild_id: int, server_id: str, state_data: Dict[str, Any], parser_type: str = "log_parser"):
+        """Save parser state for a specific server"""
+        try:
+            await self.parser_states.update_one(
+                {
+                    "guild_id": guild_id,
+                    "server_id": server_id,
+                    "parser_type": parser_type
+                },
+                {
+                    "$set": {
+                        "guild_id": guild_id,
+                        "server_id": server_id,
+                        "parser_type": parser_type,
+                        "last_updated": datetime.now(timezone.utc),
+                        **state_data
+                    }
+                },
+                upsert=True
+            )
+            logger.debug(f"Saved parser state for {server_id}")
+        except Exception as e:
+            logger.error(f"Failed to save parser state: {e}")
+
+    async def get_all_parser_states(self, guild_id: int, parser_type: str = "log_parser") -> Dict[str, Dict[str, Any]]:
+        """Get all parser states for a guild"""
+        try:
+            states = {}
+            cursor = self.parser_states.find({
+                "guild_id": guild_id,
+                "parser_type": parser_type
+            })
+            async for state in cursor:
+                server_id = state.get("server_id")
+                if server_id:
+                    states[server_id] = state
+            return states
+        except Exception as e:
+            logger.error(f"Failed to get all parser states: {e}")
+            return {}

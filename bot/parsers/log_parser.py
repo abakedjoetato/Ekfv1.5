@@ -41,8 +41,7 @@ class LogParser:
         self.log_file_hashes: Dict[str, str] = {}  # Track log file rotation
         self.player_lifecycle: Dict[str, Dict[str, Any]] = {}  # Track comprehensive player lifecycle
 
-        # PERSISTENT FILE TRACKING - Track file state across restarts
-        self.file_state_path = Path('./log_parser_state.json')
+        # PERSISTENT FILE TRACKING - Track file state in database (per server)
         self.file_states: Dict[str, Dict[str, Any]] = {}  # Track file size, position, and last line
 
         # PLAYER CONNECTION LIFECYCLE TRACKING - Initialize new system
@@ -1447,25 +1446,7 @@ class LogParser:
             import traceback
             logger.error(f"Full traceback: {traceback.format_exc()}")
 
-    async def run_log_parser(self):
-        """Run log parser for all premium servers"""
-        try:
-            logger.info("Running enhanced log parser for premium servers...")
 
-            # Get all guilds with configured servers
-            guilds_cursor = self.bot.database.guilds.find({})
-
-            async for guild_doc in guilds_cursor:
-                guild_id = guild_doc['guild_id']
-                servers = guild_doc.get('servers', [])
-
-                for server_config in servers:
-                    await self.parse_server_logs(guild_id, server_config)
-
-            logger.info("Enhanced log parser completed")
-
-        except Exception as e:
-            logger.error(f"Failed to run enhanced log parser: {e}")
 
     async def process_log_content(self, guild_id: int, server_id: str, content: str):
         """Process log content and extract events"""
@@ -1526,28 +1507,62 @@ class LogParser:
             logger.error(f"Failed to process log event: {e}")
 
     async def _load_persistent_state(self):
-        """Load persistent file state from disk"""
+        """Load persistent file state from database"""
         try:
-            if self.file_state_path.exists():
-                async with aiofiles.open(self.file_state_path, 'r') as f:
-                    content = await f.read()
-                    self.file_states = json.loads(content) if content.strip() else {}
-                    logger.info(f"Loaded persistent state for {len(self.file_states)} servers")
-            else:
-                self.file_states = {}
-                logger.info("No persistent state file found, starting fresh")
+            # Get all guilds that have configured servers
+            guilds_cursor = self.bot.db_manager.guilds.find({})
+            total_states = 0
+            
+            async for guild in guilds_cursor:
+                guild_id = guild.get('guild_id')
+                servers = guild.get('servers', [])
+                
+                for server in servers:
+                    server_id = server.get('server_id')
+                    if server_id:
+                        # Get parser state for this server
+                        state = await self.bot.db_manager.get_parser_state(guild_id, server_id, "log_parser")
+                        if state:
+                            server_key = f"{guild_id}_{server_id}"
+                            self.file_states[server_key] = {
+                                'file_size': state.get('file_size', 0),
+                                'last_position': state.get('last_position', 0),
+                                'last_line': state.get('last_line', ''),
+                                'file_hash': state.get('file_hash', ''),
+                                'last_processed': state.get('last_processed')
+                            }
+                            total_states += 1
+            
+            logger.info(f"Loaded persistent state for {total_states} servers from database")
         except Exception as e:
-            logger.error(f"Failed to load persistent state: {e}")
+            logger.error(f"Failed to load persistent state from database: {e}")
             self.file_states = {}
 
     async def _save_persistent_state(self):
-        """Save persistent file state to disk"""
+        """Save persistent file state to database"""
         try:
-            async with aiofiles.open(self.file_state_path, 'w') as f:
-                await f.write(json.dumps(self.file_states, indent=2))
-            logger.debug("Saved persistent state to disk")
+            for server_key, state_data in self.file_states.items():
+                if '_' in server_key:
+                    guild_id_str, server_id = server_key.split('_', 1)
+                    guild_id = int(guild_id_str)
+                    
+                    # Save state to database
+                    await self.bot.db_manager.save_parser_state(
+                        guild_id=guild_id,
+                        server_id=server_id,
+                        state_data={
+                            'file_size': state_data.get('file_size', 0),
+                            'last_position': state_data.get('last_position', 0),
+                            'last_line': state_data.get('last_line', ''),
+                            'file_hash': state_data.get('file_hash', ''),
+                            'last_processed': state_data.get('last_processed')
+                        },
+                        parser_type="log_parser"
+                    )
+            
+            logger.debug("Saved persistent state to database")
         except Exception as e:
-            logger.error(f"Failed to save persistent state: {e}")
+            logger.error(f"Failed to save persistent state to database: {e}")
 
     async def _update_file_state(self, server_key: str, file_size: int, line_count: int, last_line_content: str):
         """Update file state tracking"""
