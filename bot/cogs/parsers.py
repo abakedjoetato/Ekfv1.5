@@ -408,5 +408,79 @@ class Parsers(commands.Cog):
 
         await ctx.followup.send(embed=embed)
 
+    @discord.slash_command(name="investigate_playercount", description="Deep investigation of player count issues")
+    async def investigate_playercount(self, ctx: discord.ApplicationContext, 
+                                     server_id: Option(str, "Specific server ID to investigate", required=False) = None):
+        """Comprehensive player count investigation"""
+        await ctx.defer(ephemeral=True)
+
+        guild_id = ctx.guild.id
+
+        if not hasattr(self.bot, 'log_parser') or not self.bot.log_parser:
+            await ctx.followup.send("❌ Log parser not initialized")
+            return
+
+        # Get guild config
+        guild_config = await self.bot.db_manager.get_guild(guild_id)
+        if not guild_config or not guild_config.get('servers'):
+            await ctx.followup.send("❌ No servers configured for this guild")
+            return
+
+        servers = guild_config.get('servers', [])
+        connection_parser = self.bot.log_parser.connection_parser
+
+        investigation_results = []
+
+        for server_config in servers:
+            server_name = server_config.get('name', 'Unknown')
+            current_server_id = str(server_config.get('_id', 'unknown'))
+
+            if server_id and current_server_id != server_id:
+                continue
+
+            server_key = f"{guild_id}_{current_server_id}"
+
+            # 1. Verify regex patterns
+            pattern_results = connection_parser.verify_regex_patterns()
+
+            # 2. Test counting logic
+            counting_results = connection_parser.test_counting_logic(server_key)
+
+            # 3. Check file processing state
+            file_state = self.bot.log_parser.file_states.get(server_key, {})
+
+            investigation_results.append({
+                'server_name': server_name,
+                'server_id': current_server_id,
+                'pattern_results': pattern_results,
+                'counting_results': counting_results,
+                'file_state': file_state
+            })
+
+        # Create detailed report
+        embed = discord.Embed(
+            title="🔬 Player Count Investigation Report",
+            color=0x00ff00,
+            timestamp=datetime.now(timezone.utc)
+        )
+
+        for result in investigation_results:
+            pattern_summary = {k: v['match_count'] for k, v in result['pattern_results'].items()}
+            counting = result['counting_results']
+
+            embed.add_field(
+                name=f"🔍 {result['server_name']} Investigation",
+                value=f"**Pattern Matches:** {sum(pattern_summary.values())} total\n"
+                      f"**Queue Count:** Manual={counting.get('manual_count', {}).get('queue_count', 0)}, "
+                      f"Official={counting.get('official_stats', {}).get('queue_count', 0)}\n"
+                      f"**Player Count:** Manual={counting.get('manual_count', {}).get('player_count', 0)}, "
+                      f"Official={counting.get('official_stats', {}).get('player_count', 0)}\n"
+                      f"**File State:** Size={result['file_state'].get('file_size', 0)}, "
+                      f"Lines={result['file_state'].get('line_count', 0)}",
+                inline=False
+            )
+
+        await ctx.followup.send(embed=embed)
+
 def setup(bot):
     bot.add_cog(Parsers(bot))
