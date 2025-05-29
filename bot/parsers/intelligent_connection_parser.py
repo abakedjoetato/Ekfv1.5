@@ -28,10 +28,11 @@ class PlayerConnectionState:
     def can_transition_to(self, new_state: str) -> bool:
         """Check if player can logically transition to the new state"""
         valid_transitions = {
-            'OFFLINE': ['QUEUED', 'JOINED'],  # Allow direct join if queue event was missed
-            'QUEUED': ['JOINED', 'DISCONNECTED'],
+            'OFFLINE': ['QUEUED', 'CONNECTING', 'JOINED'],  # Allow direct join if queue event was missed
+            'QUEUED': ['CONNECTING', 'JOINED', 'DISCONNECTED'],  # Added CONNECTING state
+            'CONNECTING': ['JOINED', 'DISCONNECTED'],  # Beacon/intermediate state
             'JOINED': ['DISCONNECTED'],
-            'DISCONNECTED': ['QUEUED', 'JOINED', 'OFFLINE']  # Allow re-queueing or direct join after disconnect
+            'DISCONNECTED': ['QUEUED', 'CONNECTING', 'JOINED', 'OFFLINE']  # Allow re-queueing or direct join after disconnect
         }
 
         return new_state in valid_transitions.get(self.current_state, [])
@@ -94,32 +95,41 @@ class IntelligentConnectionParser:
         self.player_names: Dict[str, Dict[str, str]] = {}
 
         self.patterns = {
-            # Updated patterns based on actual log format from attached_assets/Deadside.log
+            # Core connection lifecycle patterns (matching actual log format)
 
-            # 1. Queue Join - Player enters queue (actual format)
+            # 1. Queue Join - Player enters queue
             'queue_join': re.compile(r'LogNet: Join request: /Game/Maps/world_\d+/World_\d+\?.*Name=([^&\?]+).*eosid=\|([a-f0-9]+)', re.IGNORECASE),
 
-            # 2. Player Successfully Registered 
+            # 2. Beacon Join - Intermediate connection step
+            'beacon_join': re.compile(r'LogBeacon: Beacon Join SFPSOnlineBeaconClient EOS:\|([a-f0-9]+)', re.IGNORECASE),
+
+            # 3. Player Successfully Registered (actual join completion)
             'player_joined': re.compile(r'LogOnline: Warning: Player \|([a-f0-9]+) successfully registered!', re.IGNORECASE),
 
-            # 3. Disconnect (covers both pre and post join)
-            'disconnect': re.compile(r'UChannel::Close: Sending CloseBunch.*UniqueId: (?:EOS:|PS5:)\|?([a-f0-9]+)', re.IGNORECASE),
+            # 4. Disconnect patterns (covers both pre and post join)
+            'disconnect': re.compile(r'UChannel::Close: Sending CloseBunch.*UniqueId: EOS:\|([a-f0-9]+)', re.IGNORECASE),
+            'disconnect_alt': re.compile(r'UNetConnection::Close:.*UniqueId: EOS:\|([a-f0-9]+)', re.IGNORECASE),
 
-            # 4. Mission events - Updated to match actual log format (no timestamp brackets)
+            # 5. Beacon disconnect pattern (was missing)
+            'beacon_disconnect': re.compile(r'LogBeacon:.*Beacon.*(?:disconnect|close|cleanup).*EOS:\|([a-f0-9]+)', re.IGNORECASE),
+
+            # 6. Mission events - Updated to match actual log format (no timestamp brackets)
             'mission_respawn': re.compile(r'LogSFPS: Mission (GA_[A-Za-z0-9_]*_[Mm]is[_0-9]*) will respawn in (\d+)', re.IGNORECASE),
             'mission_initial': re.compile(r'LogSFPS: Mission (GA_[A-Za-z0-9_]*_[Mm]is[_0-9]*) switched to INITIAL', re.IGNORECASE),
             'mission_ready': re.compile(r'LogSFPS: Mission (GA_[A-Za-z0-9_]*_[Mm]is[_0-9]*) switched to READY', re.IGNORECASE),
+            'mission_in_progress': re.compile(r'LogSFPS: Mission (GA_[A-Za-z0-9_]*_[Mm]is[_0-9]*) switched to IN_PROGRESS', re.IGNORECASE),
+            'mission_completed': re.compile(r'LogSFPS: Mission (GA_[A-Za-z0-9_]*_[Mm]is[_0-9]*) switched to COMPLETED', re.IGNORECASE),
 
-            # 5. Vehicle events - Updated to match actual log format
-            'vehicle_spawn': re.compile(r'LogSFPS: \[ASFPSGameMode::NewVehicle_Add\] Add vehicle (BP_SFPSVehicle_[A-Za-z0-9_]+) Total (\d+)', re.IGNORECASE),
-            'vehicle_delete': re.compile(r'LogSFPS: \[ASFPSGameMode::NewVehicle_Del\] Del vehicle (BP_SFPSVehicle_[A-Za-z0-9_]+) Total (\d+)', re.IGNORECASE),
+            # 7. Vehicle events - Updated to match actual log format
+            'vehicle_spawn': re.compile(r'LogSFPS: \[ASFPSGameMode::NewVehicle_Add\] Add vehicle (BP_SFPSVehicle_[A-Za-z0-9_]+_C_\d+) Total (\d+)', re.IGNORECASE),
+            'vehicle_delete': re.compile(r'LogSFPS: \[ASFPSGameMode::NewVehicle_Del\] Del vehicle (BP_SFPSVehicle_[A-Za-z0-9_]+_C_\d+) Total (\d+)', re.IGNORECASE),
 
-            # Alternate patterns for broader coverage
+            # 8. Alternate patterns for broader coverage
             'queue_join_alt': re.compile(r'LogNet: Join request:.*Name=([^&\s]+).*(?:platformid=(?:PS5|XSX|PC):(\w+)|eosid=\|(\w+))', re.IGNORECASE),
 
-            # Additional connection events
+            # 9. Additional connection events for better coverage
             'player_connected': re.compile(r'LogOnline:.*Player.*(\w{32}).*connected', re.IGNORECASE),
-            'disconnect_alt': re.compile(r'UChannel::Close.*UniqueId:.*(\w{32})', re.IGNORECASE)
+            'network_close': re.compile(r'UChannel::Close.*UniqueId:.*(\w{32})', re.IGNORECASE)
         }
 
     def initialize_server_tracking(self, server_key: str):
@@ -172,10 +182,11 @@ class IntelligentConnectionParser:
             player_id = match.group(1)
             logger.debug(f"🔍 Beacon join pattern matched: id={player_id}")
 
-            # Update existing player state if found
-            if player_id in self.player_states[server_key]:
-                player_state = self.player_states[server_key][player_id]
-                player_state.transition_to('CONNECTING', 'beacon_join')
+            if player_id:
+                player_state = self.get_or_create_player_state(server_key, player_id)
+
+                if player_state.transition_to('CONNECTING', 'beacon_join'):
+                    logger.debug(f"🔗 Beacon Connect: {player_id} - transitioning to CONNECTING")
 
         # Check for player successfully registered (actual join completion)
         elif (match := self.patterns['player_joined'].search(line)):
@@ -232,9 +243,24 @@ class IntelligentConnectionParser:
                 logger.debug(f"🟠 Unknown Player Disconnect: {player_id}")
 
         # Check for beacon disconnect
-        elif self.patterns['beacon_disconnect'].search(line):
-            logger.debug(f"🔍 Beacon disconnect detected")
-            # This is a general beacon disconnect - we'd need more context to map to specific player
+        elif (match := self.patterns['beacon_disconnect'].search(line)):
+            player_id = match.group(1) if match.groups() else None
+            logger.debug(f"🔍 Beacon disconnect detected: id={player_id}")
+            
+            if player_id and player_id in self.player_states[server_key]:
+                player_state = self.player_states[server_key][player_id]
+                
+                # Only create disconnect embed if player was actually connected/joined
+                should_create_embed = player_state.current_state == 'JOINED'
+                
+                if player_state.transition_to('DISCONNECTED', 'beacon_disconnect'):
+                    await self._update_counts(server_key)
+                    
+                    if should_create_embed:
+                        logger.info(f"🔴 Beacon Disconnect (was joined): {player_state.player_name or player_id}")
+                        await self._queue_leave_embed(player_state, server_key, guild_id)
+                    else:
+                        logger.info(f"🟠 Beacon Disconnect (from queue/connecting): {player_state.player_name or player_id}")
         else:
             # Debug: Log lines that contain player-related keywords but don't match patterns
             if any(keyword in line_lower for keyword in ['player', 'join', 'request', 'registered', 'uniqueid', 'uchannel', 'close']):
@@ -427,15 +453,18 @@ class IntelligentConnectionParser:
     def verify_regex_patterns(self, sample_log_lines: list = None) -> dict:
         """Verify regex patterns against sample log lines"""
         if sample_log_lines is None:
+            # Use actual log lines from the attached Deadside.log file
             sample_log_lines = [
-                "[2024.12.15-14:30:25:123] LogNet: AddClientConnection: Added client connection: [UNetConnection] RemoteAddr: 192.168.1.1:12345, Name: UNetConnection_1, Driver: GameNetDriver IpNetDriver_1, IsServer: YES, PC: BP_PlayerController_C_1, Owner: BP_PlayerController_C_1, UniqueId: Steam:76561198123456789[TestPlayer]",
-                "[2024.12.15-14:30:25:124] LogNet: RemoteAddr: 192.168.1.2:12346, Name: UNetConnection_2, Driver: GameNetDriver IpNetDriver_2, PC: BP_PlayerController_C_2, UniqueId: Steam:76561198987654321[AnotherPlayer]",
-                "[2024.12.15-14:30:25:125] LogNet: UNetConnection::Close: [UNetConnection] RemoteAddr: 192.168.1.1:12345, Name: UNetConnection_1, Driver: GameNetDriver IpNetDriver_1, UniqueId: Steam:76561198123456789[TestPlayer], CloseReason: Destroyed",
-                "[2024.12.15-14:30:25:126] LogNet: UNetConnection::CleanUp: [UNetConnection] RemoteAddr: 192.168.1.2:12346, Name: UNetConnection_2, Driver: GameNetDriver IpNetDriver_2, UniqueId: Steam:76561198987654321[AnotherPlayer]",
-                "[2024.12.15-14:30:25:127] LogGameMode: PostLogin: NewPlayer: BP_PlayerController_C_3 [Steam:76561198111111111[NewPlayer]]",
-                "[2024.12.15-14:30:25:128] LogNet: Server accepting post-challenge connection from: 192.168.1.3:12347",
-                "[2024.12.15-14:30:25:129] LogNet: RemoteEndpoint: 192.168.1.3:12347 has been added to queue (position 1)",
-                "[2024.12.15-14:30:25:130] LogNet: Player connection terminated: Steam:76561198222222222[LeftPlayer] (reason: disconnect)"
+                "LogNet: Join request: /Game/Maps/world_0/World_0?logintype=eos&login=Njshh&Name=Njshh&eosid=|0002e69a65204b669c20238266782d7b",
+                "LogBeacon: Beacon Join SFPSOnlineBeaconClient EOS:|0002e69a65204b669c20238266782d7b",
+                "LogOnline: Warning: Player |0002e69a65204b669c20238266782d7b successfully registered!",
+                "UChannel::Close: Sending CloseBunch. ChIndex == 0. UniqueId: EOS:|0002e69a65204b669c20238266782d7b",
+                "UNetConnection::Close: Connection cleanup. UniqueId: EOS:|0002e69a65204b669c20238266782d7b",
+                "LogSFPS: Mission GA_Settle_05_ChernyLog_mis1 will respawn in 221",
+                "LogSFPS: Mission GA_Settle_05_ChernyLog_mis1 switched to INITIAL",
+                "LogSFPS: Mission GA_Military_02_mis1 switched to READY",
+                "LogSFPS: [ASFPSGameMode::NewVehicle_Add] Add vehicle BP_SFPSVehicle_Ural_M6736_Sidecar_C_2147482394 Total 1",
+                "LogSFPS: [ASFPSGameMode::NewVehicle_Del] Del vehicle BP_SFPSVehicle_Ural_M6736_Sidecar_C_2147482394 Total 0"
             ]
 
         results = {}

@@ -59,20 +59,25 @@ class LogParser:
         return {
             # PLAYER CONNECTION LIFECYCLE EVENTS (4 Core Events)
 
-            # 1. Queue Join (jq) - Player enters queue (actual format from logs)
+            # PLAYER CONNECTION LIFECYCLE EVENTS (Updated to match intelligent parser)
+
+            # 1. Queue Join - Player enters queue (actual format from logs)
             'queue_join': re.compile(r'LogNet: Join request: /Game/Maps/world_\d+/World_\d+\?.*Name=([^&\?]+).*eosid=\|([a-f0-9]+)', re.IGNORECASE),
 
             # 2. Beacon connection (intermediate step)
             'beacon_join': re.compile(r'LogBeacon: Beacon Join SFPSOnlineBeaconClient EOS:\|([a-f0-9]+)', re.IGNORECASE),
 
-            # 3. Player Joined (j2) - Player successfully connects (updated format)
+            # 3. Player Joined - Player successfully connects (updated format)
             'player_joined': re.compile(r'LogOnline: Warning: Player \|([a-f0-9]+) successfully registered!', re.IGNORECASE),
 
-            # 4. Disconnect Post-Join (d1) - Standard disconnect after joining
+            # 4. Disconnect Post-Join - Standard disconnect after joining
             'disconnect_post_join': re.compile(r'UChannel::Close: Sending CloseBunch.*UniqueId: EOS:\|([a-f0-9]+)', re.IGNORECASE),
 
-            # 5. Disconnect Pre-Join (d2) - Disconnect from queue before joining  
+            # 5. Disconnect Pre-Join - Disconnect from queue before joining  
             'disconnect_pre_join': re.compile(r'UNetConnection::Close:.*UniqueId: EOS:\|([a-f0-9]+)', re.IGNORECASE),
+
+            # 6. Beacon disconnect
+            'beacon_disconnect': re.compile(r'LogBeacon:.*Beacon.*(?:disconnect|close|cleanup).*EOS:\|([a-f0-9]+)', re.IGNORECASE),
 
             # Phase 4: Disconnection Tracking
             'player_disconnect_cleanup': re.compile(r'\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\].*UChannel::CleanUp.*Connection.*RemoteAddr:\s*([\d\.]+):(\d+)', re.IGNORECASE),

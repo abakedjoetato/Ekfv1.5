@@ -211,11 +211,17 @@ class IntelligentLogParser:
         
         # PLAYER LIFECYCLE TRACKING
         # Queue join (beacon connection attempt)
-        elif self.patterns['player_queue_join'].search(line):
+        elif match := self.patterns['player_queue_join'].search(line):
+            player_name = match.group(1)
+            player_id = match.group(2)
             events.append({
                 'type': 'player_queue_attempt',
                 'timestamp': timestamp,
-                'data': {'message': 'Player attempting to join queue'}
+                'data': {
+                    'player_name': player_name,
+                    'player_id': player_id,
+                    'message': f'Player {player_name} attempting to join queue'
+                }
             })
         
         # Queue accepted (player enters queue)
