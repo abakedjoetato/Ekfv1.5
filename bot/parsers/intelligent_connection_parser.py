@@ -93,31 +93,41 @@ class IntelligentConnectionParser:
         # Player name cache per server
         self.player_names: Dict[str, Dict[str, str]] = {}
 
-        # Regex patterns for connection events - improved to catch more variations
+        # Regex patterns for connection events - updated to match actual Deadside log format
         self.patterns = {
+            # Queue join - matches the actual "Join request" format with Name parameter
             'queue_join': re.compile(
-                r'LogNet: Join request: /Game/Maps/world_\d+/World_\d+\?.*\?Name=([^&\s]+).*(?:platformid=PS5:(\w+)|eosid=\|(\w+))', 
+                r'LogNet: Join request: /Game/Maps/world_\d+/World_\d+\?.*Name=([^&\?]+).*eosid=\|([a-f0-9]+)', 
                 re.IGNORECASE
             ),
+            
+            # Beacon connection established (first step in connection process)
+            'beacon_join': re.compile(
+                r'LogBeacon: Beacon Join SFPSOnlineBeaconClient EOS:\|([a-f0-9]+)',
+                re.IGNORECASE
+            ),
+            
+            # Player successfully registered (actual join completion)
             'player_joined': re.compile(
-                r'LogOnline: Warning: Player \|(\w+) successfully registered!', 
+                r'LogOnline: Warning: Player \|([a-f0-9]+) successfully registered!', 
                 re.IGNORECASE
             ),
+            
+            # Disconnect via UChannel close with UniqueId
             'disconnect': re.compile(
-                r'UChannel::Close: Sending CloseBunch.*UniqueId: (?:EOS:|PS5:)\|?(\w+)', 
+                r'UChannel::Close: Sending CloseBunch.*UniqueId: EOS:\|([a-f0-9]+)', 
                 re.IGNORECASE
             ),
-            # Additional patterns to catch more connection events
-            'queue_join_alt': re.compile(
-                r'LogNet: Join request:.*Name=([^&\s]+).*(?:platformid=(?:PS5|XSX|PC):(\w+)|eosid=\|(\w+))', 
-                re.IGNORECASE
-            ),
-            'player_connected': re.compile(
-                r'LogOnline:.*Player.*(\w{32}).*connected', 
-                re.IGNORECASE
-            ),
+            
+            # Alternative disconnect via UNetConnection close
             'disconnect_alt': re.compile(
-                r'UChannel::Close.*UniqueId:.*(\w{32})', 
+                r'UNetConnection::Close:.*UniqueId: EOS:\|([a-f0-9]+)', 
+                re.IGNORECASE
+            ),
+            
+            # Beacon disconnection
+            'beacon_disconnect': re.compile(
+                r'LogSFPS:.*NotifyClientDisconnected.*Client name: SFPSOnlineBeaconClient_',
                 re.IGNORECASE
             )
         }
@@ -152,11 +162,11 @@ class IntelligentConnectionParser:
         # Debug: Check each pattern individually and log what we're trying to match
         line_lower = line.lower()
 
-        # Check for queue join (try both patterns)
-        queue_match = self.patterns['queue_join'].search(line) or self.patterns['queue_join_alt'].search(line)
+        # Check for queue join
+        queue_match = self.patterns['queue_join'].search(line)
         if queue_match:
             player_name = queue_match.group(1)
-            player_id = queue_match.group(2) or queue_match.group(3)
+            player_id = queue_match.group(2)
 
             logger.debug(f"🔍 Queue join pattern matched: name={player_name}, id={player_id}")
 
@@ -167,8 +177,18 @@ class IntelligentConnectionParser:
                     await self._update_counts(server_key)
                     logger.info(f"🟡 Queue Join: {player_name} ({player_id}) - Queue: {self.server_counts[server_key]['queue_count']}, Players: {self.server_counts[server_key]['player_count']}")
 
-        # Check for player joined (try both patterns)
-        elif (match := self.patterns['player_joined'].search(line)) or (match := self.patterns['player_connected'].search(line)):
+        # Check for beacon join (intermediate connection step)
+        elif (match := self.patterns['beacon_join'].search(line)):
+            player_id = match.group(1)
+            logger.debug(f"🔍 Beacon join pattern matched: id={player_id}")
+            
+            # Update existing player state if found
+            if player_id in self.player_states[server_key]:
+                player_state = self.player_states[server_key][player_id]
+                player_state.transition_to('CONNECTING', 'beacon_join')
+
+        # Check for player successfully registered (actual join completion)
+        elif (match := self.patterns['player_joined'].search(line)):
             player_id = match.group(1)
 
             logger.debug(f"🔍 Player joined pattern matched: id={player_id}")
@@ -220,6 +240,11 @@ class IntelligentConnectionParser:
                 player_state = self.get_or_create_player_state(server_key, player_id)
                 # Don't create embed for unknown disconnects, just log
                 logger.debug(f"🟠 Unknown Player Disconnect: {player_id}")
+                
+        # Check for beacon disconnect
+        elif self.patterns['beacon_disconnect'].search(line):
+            logger.debug(f"🔍 Beacon disconnect detected")
+            # This is a general beacon disconnect - we'd need more context to map to specific player
         else:
             # Debug: Log lines that contain player-related keywords but don't match patterns
             if any(keyword in line_lower for keyword in ['player', 'join', 'request', 'registered', 'uniqueid', 'uchannel', 'close']):

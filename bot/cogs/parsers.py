@@ -338,6 +338,51 @@ class Parsers(commands.Cog):
             await ctx.followup.send(f"❌ Failed to reset log positions: {str(e)}")
             logger.error(f"Reset log positions failed: {e}")
 
+    @discord.slash_command(name="test_regex", description="Test updated regex patterns against actual log data")
+    async def test_regex(self, ctx: discord.ApplicationContext):
+        """Test updated regex patterns against actual log data"""
+        await ctx.defer(ephemeral=True)
+
+        try:
+            # Sample lines from the actual log file
+            test_lines = [
+                # Mission events
+                "LogSFPS: Mission GA_Settle_05_ChernyLog_mis1 will respawn in 221",
+                "LogSFPS: Mission GA_Settle_05_ChernyLog_mis1 switched to INITIAL",
+                "LogSFPS: Mission GA_Military_02_mis1 will respawn in 1303",
+                # Vehicle events  
+                "LogSFPS: [ASFPSGameMode::NewVehicle_Add] Add vehicle BP_SFPSVehicle_Ural_M6736_Sidecar_C_2147482394 Total 1",
+                # Connection events
+                "LogNet: Join request: /Game/Maps/world_0/World_0?logintype=eos&login=Njshh&Name=Njshh&eosid=|0002e69a65204b669c20238266782d7b",
+                "LogBeacon: Beacon Join SFPSOnlineBeaconClient EOS:|0002e69a65204b669c20238266782d7b",
+                "LogNet: UChannel::Close: Sending CloseBunch. ChIndex == 0. UniqueId: EOS:|0002e69a65204b669c20238266782d7b"
+            ]
+
+            # Test the intelligent parser patterns
+            parser = self.bot.log_parser.connection_parser
+            results = []
+            
+            for line in test_lines:
+                for pattern_name, pattern in parser.patterns.items():
+                    match = pattern.search(line)
+                    if match:
+                        results.append(f"✅ **{pattern_name}**: {match.groups()}")
+                        break
+                else:
+                    results.append(f"❌ No match: `{line[:50]}...`")
+
+            response = "**Regex Pattern Test Results:**\n\n" + "\n".join(results)
+            
+            if len(response) > 2000:
+                # Split into multiple messages if too long
+                await ctx.followup.send(response[:2000])
+                await ctx.followup.send(response[2000:])
+            else:
+                await ctx.followup.send(response)
+
+        except Exception as e:
+            await ctx.followup.send(f"❌ Test failed: {str(e)}")
+
     @discord.slash_command(name="debug_playercount", description="Debug player count tracking - comprehensive investigation")
     @discord.option(name="server_id", description="Optional specific server ID to debug", required=False)
     async def debug_playercount(self, ctx: discord.ApplicationContext, server_id: str = None):

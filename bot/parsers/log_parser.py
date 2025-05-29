@@ -59,17 +59,20 @@ class LogParser:
         return {
             # PLAYER CONNECTION LIFECYCLE EVENTS (4 Core Events)
 
-            # 1. Queue Join (jq) - Player enters queue (supports any World_* map)
-            'queue_join': re.compile(r'LogNet: Join request: /Game/Maps/world_\d+/World_\d+\?.*\?Name=([^&\s]+).*(?:platformid=PS5:(\w+)|eosid=\|(\w+))', re.IGNORECASE),
+            # 1. Queue Join (jq) - Player enters queue (actual format from logs)
+            'queue_join': re.compile(r'LogNet: Join request: /Game/Maps/world_\d+/World_\d+\?.*Name=([^&\?]+).*eosid=\|([a-f0-9]+)', re.IGNORECASE),
 
-            # 2. Player Joined (j2) - Player successfully connects
-            'player_joined': re.compile(r'LogOnline: Warning: Player \|(\w+) successfully registered!', re.IGNORECASE),
+            # 2. Beacon connection (intermediate step)
+            'beacon_join': re.compile(r'LogBeacon: Beacon Join SFPSOnlineBeaconClient EOS:\|([a-f0-9]+)', re.IGNORECASE),
 
-            # 3. Disconnect Post-Join (d1) - Standard disconnect after joining
-            'disconnect_post_join': re.compile(r'UChannel::Close: Sending CloseBunch.*UniqueId: EOS:\|(\w+)', re.IGNORECASE),
+            # 3. Player Joined (j2) - Player successfully connects (updated format)
+            'player_joined': re.compile(r'LogOnline: Warning: Player \|([a-f0-9]+) successfully registered!', re.IGNORECASE),
 
-            # 4. Disconnect Pre-Join (d2) - Disconnect from queue before joining  
-            'disconnect_pre_join': re.compile(r'UChannel::Close: Sending CloseBunch.*UniqueId: (?:PS5|EOS):\|?(\w+)', re.IGNORECASE),
+            # 4. Disconnect Post-Join (d1) - Standard disconnect after joining
+            'disconnect_post_join': re.compile(r'UChannel::Close: Sending CloseBunch.*UniqueId: EOS:\|([a-f0-9]+)', re.IGNORECASE),
+
+            # 5. Disconnect Pre-Join (d2) - Disconnect from queue before joining  
+            'disconnect_pre_join': re.compile(r'UNetConnection::Close:.*UniqueId: EOS:\|([a-f0-9]+)', re.IGNORECASE),
 
             # Phase 4: Disconnection Tracking
             'player_disconnect_cleanup': re.compile(r'\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\].*UChannel::CleanUp.*Connection.*RemoteAddr:\s*([\d\.]+):(\d+)', re.IGNORECASE),
@@ -93,11 +96,11 @@ class LogParser:
             'player_connection_cleanup': re.compile(r'\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\].*UChannel::CleanUp.*Connection.*RemoteAddr:\s*([\d\.]+):(\d+)', re.IGNORECASE),
             'player_beacon_join': re.compile(r'\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\].*BeaconHost.*accept.*from:\s*([\d\.]+):(\d+)', re.IGNORECASE),
 
-            # MISSION EVENTS - Comprehensive patterns to catch all mission variations
-            'mission_ready': re.compile(r'\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\].*Mission\s+(GA_[A-Za-z0-9_]*_Mis_?[A-Za-z0-9_]*).*switched\s+to\s+READY', re.IGNORECASE),
-            'mission_waiting': re.compile(r'\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\].*Mission\s+(GA_[A-Za-z0-9_]*_Mis_?[A-Za-z0-9_]*).*switched\s+to\s+WAITING', re.IGNORECASE),
-            'mission_initial': re.compile(r'\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\].*Mission\s+(GA_[A-Za-z0-9_]*_Mis_?[A-Za-z0-9_]*).*switched\s+to\s+INITIAL', re.IGNORECASE),
-            'mission_respawn': re.compile(r'\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\].*Mission\s+(GA_[A-Za-z0-9_]*_Mis_?[A-Za-z0-9_]*).*will\s+respawn\s+in\s+(\d+)', re.IGNORECASE),
+            # MISSION EVENTS - Updated to match actual log format (no timestamp brackets, different format)
+            'mission_ready': re.compile(r'LogSFPS: Mission (GA_[A-Za-z0-9_]*_[Mm]is[_0-9]*) switched to READY', re.IGNORECASE),
+            'mission_waiting': re.compile(r'LogSFPS: Mission (GA_[A-Za-z0-9_]*_[Mm]is[_0-9]*) switched to WAITING', re.IGNORECASE),
+            'mission_initial': re.compile(r'LogSFPS: Mission (GA_[A-Za-z0-9_]*_[Mm]is[_0-9]*) switched to INITIAL', re.IGNORECASE),
+            'mission_respawn': re.compile(r'LogSFPS: Mission (GA_[A-Za-z0-9_]*_[Mm]is[_0-9]*) will respawn in (\d+)', re.IGNORECASE),
 
             # Additional mission patterns to catch variations
             'mission_state_any': re.compile(r'\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\].*Mission\s+(GA_[A-Za-z0-9_]*_Mis_?[A-Za-z0-9_]*).*switched\s+to\s+([A-Z_]+)', re.IGNORECASE),
@@ -108,9 +111,9 @@ class LogParser:
             # PATROL POINT EVENTS
             'patrol_switch': re.compile(r'\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\].*PatrolPoint\s+([A-Za-z0-9_]+).*switched\s+to\s+([A-Z.]+)(?:.*monsters\s+(\d+))?', re.IGNORECASE),
 
-            # VEHICLE EVENTS - Enhanced detection
-            'vehicle_spawn': re.compile(r'\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\].*(?:CanSpawnVehicle|NewVehicle|Vehicle.*spawn).*(?:NewVehicles\s+(\d+)|Max\s+(\d+)|spawned|deployed)', re.IGNORECASE),
-            'vehicle_delete': re.compile(r'\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\].*(?:NewVehicle_Del|Vehicle.*(?:delete|remove|destroy)).*(?:Del\s+vehicle\s+([A-Za-z0-9_]+)|([A-Za-z0-9_]+))', re.IGNORECASE),
+            # VEHICLE EVENTS - Updated to match actual log format
+            'vehicle_spawn': re.compile(r'LogSFPS: \[ASFPSGameMode::NewVehicle_Add\] Add vehicle (BP_SFPSVehicle_[A-Za-z0-9_]+) Total (\d+)', re.IGNORECASE),
+            'vehicle_delete': re.compile(r'LogSFPS: \[ASFPSGameMode::NewVehicle_Del\] Del vehicle (BP_SFPSVehicle_[A-Za-z0-9_]+) Total (\d+)', re.IGNORECASE),
 
             # HELICOPTER CRASH EVENTS - Enhanced patterns
             'helicrash_initial': re.compile(r'\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\].*(?:Heli.*crash|Helicopter.*crash|HeliCrash).*(?:INITIAL|initiated|spawned)', re.IGNORECASE),
@@ -129,8 +132,10 @@ class LogParser:
             # CONSTRUCTION SAVES - Detect but suppress output
             'construction_save': re.compile(r'\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\].*(?:LogSFPSConstruction|Construction).*Save.*constructibles\s+(\d+).*([0-9.]+)ms', re.IGNORECASE),
 
-            # SERVER CONFIGURATION
-            'server_max_players': re.compile(r'\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\].*playersmaxcount=(\d+)', re.IGNORECASE),
+            # SERVER CONFIGURATION - Updated to match actual log format
+            'server_max_players': re.compile(r'LogSFPS:.*playersmaxcount=(\d+)', re.IGNORECASE),
+            'server_startup': re.compile(r'LogWorld: Bringing World.*up for play.*at (\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2})', re.IGNORECASE),
+            'session_created': re.compile(r'LogOnline: Warning: Session .* created successfully!', re.IGNORECASE),
 
             # GENERIC FALLBACK PATTERNS for better coverage
             'generic_mission': re.compile(r'\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\].*(?:Mission|GA_[A-Za-z0-9_]*_Mis_?[A-Za-z0-9_]*).*(?:READY|WAITING|INITIAL|respawn)', re.IGNORECASE),
