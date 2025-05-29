@@ -201,6 +201,9 @@ class IntelligentConnectionParser:
 
     async def _update_counts(self, server_key: str):
         """Update live player and queue counts"""
+        # Ensure server is initialized before accessing
+        self.initialize_server_tracking(server_key)
+        
         queue_count = 0
         player_count = 0
         

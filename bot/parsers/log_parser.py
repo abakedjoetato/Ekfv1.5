@@ -1398,8 +1398,9 @@ class LogParser:
                     await self._update_file_state(server_key, content_size, total_lines, lines[-1] if lines else "")
                     
                     # Ensure voice channels are updated with current player counts from cold start
-                    if hasattr(self.connection_parser, '_update_counts'):
-                        await self.connection_parser._update_counts(server_key)
+                    # Initialize server tracking first, then update counts
+                    self.connection_parser.initialize_server_tracking(server_key)
+                    await self.connection_parser._update_counts(server_key)
                     
                 finally:
                     # Clean up temporary file
