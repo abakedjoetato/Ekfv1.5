@@ -11,7 +11,7 @@ import discord
 from discord.ext import commands
 from bot.cogs.autocomplete import ServerAutocomplete
 from discord import Option
-from discord import app_commands
+#from discord import app_commands # Removed app_commands import, not needed for py-cord 2.6.1
 
 logger = logging.getLogger(__name__)
 
@@ -254,7 +254,7 @@ class Parsers(commands.Cog):
 
         try:
             if not hasattr(self.bot, 'log_parser'):
-                await ctx.respond("❌ Log parser not initialized", ephemeral=True)
+                await ctx.followup.send("❌ Log parser not initialized")
                 return
 
             # Get guild servers
@@ -338,11 +338,11 @@ class Parsers(commands.Cog):
             await ctx.followup.send(f"❌ Failed to reset log positions: {str(e)}")
             logger.error(f"Reset log positions failed: {e}")
 
-    @app_commands.command(name="debug_playercount", description="Debug player count tracking - comprehensive investigation")
-    @app_commands.describe(server_id="Optional specific server ID to debug")
-    async def debug_playercount(self, ctx: discord.Interaction, server_id: str = None):
+    @discord.slash_command(name="debug_playercount", description="Debug player count tracking - comprehensive investigation")
+    @discord.option(name="server_id", description="Optional specific server ID to debug", required=False)
+    async def debug_playercount(self, ctx: discord.ApplicationContext, server_id: str = None):
         """Debug player count tracking for investigation"""
-        await ctx.response.defer(ephemeral=True)
+        await ctx.defer(ephemeral=True)
 
         guild_id = ctx.guild.id
 
